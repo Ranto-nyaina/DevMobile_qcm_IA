@@ -37,6 +37,45 @@ class ApiService {
   }
 
   // ==========================================================
+  // TOKEN / HEADERS
+  // ==========================================================
+
+  static Future<String?> _getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString("token");
+  }
+
+  /// En-têtes pour requêtes authentifiées JSON.
+  /// Lève une exception explicite si aucun token n'est stocké,
+  /// plutôt que de laisser le serveur renvoyer un 401 opaque.
+  static Future<Map<String, String>> _headersAuth() async {
+    final token = await _getToken();
+
+    if (token == null) {
+      throw Exception("Utilisateur non connecté.");
+    }
+
+    return {
+      "Content-Type": "application/json",
+      "Authorization": "Token $token",
+    };
+  }
+
+  /// En-tête d'autorisation seul (pour requêtes multipart,
+  /// où Content-Type est géré par http.MultipartRequest).
+  static Future<Map<String, String>> _headerAuthSeul() async {
+    final token = await _getToken();
+
+    if (token == null) {
+      throw Exception("Utilisateur non connecté.");
+    }
+
+    return {
+      "Authorization": "Token $token",
+    };
+  }
+
+  // ==========================================================
   // SESSION
   // ==========================================================
 
@@ -45,21 +84,16 @@ class ApiService {
     final prefs =
         await SharedPreferences.getInstance();
 
-    final userId =
-        prefs.getInt("user_id");
-
-    final username =
-        prefs.getString("username");
-
-    final email =
-        prefs.getString("email");
-
-    final role =
-        prefs.getString("role");
+    final userId = prefs.getInt("user_id");
+    final username = prefs.getString("username");
+    final email = prefs.getString("email");
+    final role = prefs.getString("role");
+    final token = prefs.getString("token");
 
     if (userId == null ||
         username == null ||
-        role == null) {
+        role == null ||
+        token == null) {
       return null;
     }
 
@@ -75,7 +109,8 @@ class ApiService {
     final prefs =
         await SharedPreferences.getInstance();
 
-    return prefs.getInt("user_id") != null &&
+    return prefs.getString("token") != null &&
+        prefs.getInt("user_id") != null &&
         prefs.getString("username") != null &&
         prefs.getString("role") != null;
   }
@@ -83,21 +118,18 @@ class ApiService {
   static Future<String?> getRole() async {
     final prefs =
         await SharedPreferences.getInstance();
-
     return prefs.getString("role");
   }
 
   static Future<String?> getUsername() async {
     final prefs =
         await SharedPreferences.getInstance();
-
     return prefs.getString("username");
   }
 
   static Future<int?> getUserId() async {
     final prefs =
         await SharedPreferences.getInstance();
-
     return prefs.getInt("user_id");
   }
 
@@ -107,21 +139,66 @@ class ApiService {
         await SharedPreferences.getInstance();
 
     return {
-      "username":
-          prefs.getString("username") ?? "",
-      "role":
-          prefs.getString("role") ?? "",
+      "username": prefs.getString("username") ?? "",
+      "role": prefs.getString("role") ?? "",
     };
+  }
+
+  /// Enregistre la session locale à partir de la réponse
+  /// d'inscription ou de connexion (qui contient toujours
+  /// un token désormais).
+  static Future<void> _enregistrerSession(
+    Map<String, dynamic> body,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (body["token"] != null) {
+      await prefs.setString("token", body["token"].toString());
+    }
+
+    if (body["user_id"] != null) {
+      await prefs.setInt(
+        "user_id",
+        int.parse(body["user_id"].toString()),
+      );
+    }
+
+    if (body["username"] != null) {
+      await prefs.setString("username", body["username"].toString());
+    }
+
+    if (body["email"] != null) {
+      await prefs.setString("email", body["email"].toString());
+    }
+
+    if (body["role"] != null) {
+      await prefs.setString("role", body["role"].toString());
+    }
   }
 
   // ==========================================================
   // DECONNEXION
+  // Révoque le token côté serveur, puis nettoie la session
+  // locale dans tous les cas (même si l'appel réseau échoue,
+  // pour ne jamais laisser l'utilisateur bloqué connecté
+  // localement sans pouvoir agir).
   // ==========================================================
 
   static Future<void> deconnexion() async {
-    final prefs =
-        await SharedPreferences.getInstance();
+    try {
+      final headers = await _headersAuth();
 
+      await http.post(
+        Uri.parse("$baseUrl/accounts/deconnexion/"),
+        headers: headers,
+      );
+    } catch (_) {
+      // Token déjà absent/invalide : rien à révoquer côté serveur.
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove("token");
     await prefs.remove("user_id");
     await prefs.remove("username");
     await prefs.remove("email");
@@ -151,20 +228,16 @@ class ApiService {
     }
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/accounts/inscription/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/accounts/inscription/"),
+      headers: {"Content-Type": "application/json"},
       body: jsonEncode(donnees),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200 ||
         response.statusCode == 201) {
+      await _enregistrerSession(body);
       return body;
     }
 
@@ -184,20 +257,15 @@ class ApiService {
     required String motDePasse,
   }) async {
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/accounts/connexion/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/accounts/connexion/"),
+      headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "email": email,
         "password": motDePasse,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode != 200) {
       throw Exception(
@@ -207,101 +275,37 @@ class ApiService {
       );
     }
 
-    if (body["user_id"] == null ||
+    if (body["token"] == null ||
+        body["user_id"] == null ||
         body["username"] == null ||
         body["role"] == null) {
-      throw Exception(
-        "Réponse de connexion invalide.",
-      );
+      throw Exception("Réponse de connexion invalide.");
     }
 
-    final prefs =
-        await SharedPreferences.getInstance();
-
-    await prefs.setInt(
-      "user_id",
-      int.parse(
-        body["user_id"].toString(),
-      ),
-    );
-
-    await prefs.setString(
-      "username",
-      body["username"].toString(),
-    );
-
-    await prefs.setString(
-      "email",
-      body["email"]?.toString() ?? "",
-    );
-
-    await prefs.setString(
-      "role",
-      body["role"].toString(),
-    );
+    await _enregistrerSession(body);
 
     return body;
   }
 
   // ==========================================================
   // PROFIL
+  // Ne dépend plus de user_id : le serveur identifie
+  // l'utilisateur via le token.
   // ==========================================================
 
   static Future<Map<String, dynamic>>
       getProfilUtilisateur() async {
-    final prefs =
-        await SharedPreferences.getInstance();
-
-    final userId =
-        prefs.getInt("user_id");
-
-    if (userId == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/accounts/profil/"
-        "?user_id=$userId",
-      ),
+      Uri.parse("$baseUrl/accounts/profil/"),
+      headers: headers,
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
-      if (body["user_id"] != null) {
-        await prefs.setInt(
-          "user_id",
-          int.parse(
-            body["user_id"].toString(),
-          ),
-        );
-      }
-
-      if (body["username"] != null) {
-        await prefs.setString(
-          "username",
-          body["username"].toString(),
-        );
-      }
-
-      if (body["email"] != null) {
-        await prefs.setString(
-          "email",
-          body["email"].toString(),
-        );
-      }
-
-      if (body["role"] != null) {
-        await prefs.setString(
-          "role",
-          body["role"].toString(),
-        );
-      }
-
+      await _enregistrerSession(body);
       return body;
     }
 
@@ -324,18 +328,6 @@ class ApiService {
     String? nouveauMotDePasse,
     String? confirmationMotDePasse,
   }) async {
-    final prefs =
-        await SharedPreferences.getInstance();
-
-    final userId =
-        prefs.getInt("user_id");
-
-    if (userId == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
-
     final Map<String, dynamic> donnees = {
       "username": username,
       "email": email,
@@ -371,8 +363,7 @@ class ApiService {
         );
       }
 
-      if (nouveauMotDePasse !=
-          confirmationMotDePasse) {
+      if (nouveauMotDePasse != confirmationMotDePasse) {
         throw Exception(
           "Les deux nouveaux mots de passe ne correspondent pas.",
         );
@@ -383,51 +374,18 @@ class ApiService {
       donnees["confirmation_mot_de_passe"] = confirmationMotDePasse;
     }
 
+    final headers = await _headersAuth();
+
     final response = await http.put(
-      Uri.parse(
-        "$baseUrl/accounts/profil/"
-        "?user_id=$userId",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/accounts/profil/"),
+      headers: headers,
       body: jsonEncode(donnees),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
-      if (body["user_id"] != null) {
-        await prefs.setInt(
-          "user_id",
-          int.parse(
-            body["user_id"].toString(),
-          ),
-        );
-      }
-
-      if (body["username"] != null) {
-        await prefs.setString(
-          "username",
-          body["username"].toString(),
-        );
-      }
-
-      if (body["email"] != null) {
-        await prefs.setString(
-          "email",
-          body["email"].toString(),
-        );
-      }
-
-      if (body["role"] != null) {
-        await prefs.setString(
-          "role",
-          body["role"].toString(),
-        );
-      }
-
+      await _enregistrerSession(body);
       return body;
     }
 
@@ -439,123 +397,29 @@ class ApiService {
   }
 
   // ==========================================================
-  // MOT DE PASSE
-  // ==========================================================
-
-  static Future<Map<String, dynamic>>
-      modifierMotDePasse({
-    required String ancienMotDePasse,
-    required String nouveauMotDePasse,
-    required String confirmationMotDePasse,
-  }) async {
-    final prefs =
-        await SharedPreferences.getInstance();
-
-    final userId =
-        prefs.getInt("user_id");
-
-    if (userId == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
-
-    if (ancienMotDePasse.isEmpty) {
-      throw Exception(
-        "Veuillez saisir votre ancien mot de passe.",
-      );
-    }
-
-    if (nouveauMotDePasse.isEmpty) {
-      throw Exception(
-        "Veuillez saisir le nouveau mot de passe.",
-      );
-    }
-
-    if (confirmationMotDePasse.isEmpty) {
-      throw Exception(
-        "Veuillez confirmer le nouveau mot de passe.",
-      );
-    }
-
-    if (nouveauMotDePasse !=
-        confirmationMotDePasse) {
-      throw Exception(
-        "Les deux nouveaux mots de passe ne correspondent pas.",
-      );
-    }
-
-    final response = await http.patch(
-      Uri.parse(
-        "$baseUrl/accounts/mot-de-passe/modifier/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode({
-        "user_id": userId,
-        "ancien_mot_de_passe": ancienMotDePasse,
-        "nouveau_mot_de_passe": nouveauMotDePasse,
-        "confirmation_mot_de_passe": confirmationMotDePasse,
-      }),
-    );
-
-    final body =
-        _decodeResponse(response);
-
-    if (response.statusCode == 200) {
-      return body;
-    }
-
-    throw Exception(
-      body["error"] ??
-          body["detail"] ??
-          "Impossible de modifier le mot de passe.",
-    );
-  }
-
-  // ==========================================================
   // RECUPERER LES ETUDIANTS
   // ==========================================================
 
   static Future<List<dynamic>>
       getEtudiants() async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
-
-    if (username == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/accounts/etudiants/"
-        "?username=${Uri.encodeComponent(username)}"
-        "&role=${Uri.encodeComponent(role)}",
-      ),
+      Uri.parse("$baseUrl/accounts/etudiants/"),
+      headers: headers,
     );
 
     if (response.statusCode == 200) {
-      final data =
-          jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
       if (data is List) {
         return data;
       }
 
-      throw Exception(
-        "Format de réponse invalide.",
-      );
+      throw Exception("Format de réponse invalide.");
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
       body["error"] ??
@@ -570,42 +434,25 @@ class ApiService {
 
   static Future<List<dynamic>>
       getQuestionsOuvertes() async {
-    final userId =
-        await getUserId();
-
-    final role =
-        await getRole();
-
-    if (userId == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/qcm/questions-ouvertes/"
-        "?user_id=$userId"
-        "&role=${Uri.encodeComponent(role)}",
-      ),
+      Uri.parse("$baseUrl/qcm/questions-ouvertes/"),
+      headers: headers,
     );
 
     if (response.statusCode == 200) {
-      final data =
-          jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
       if (data is List) {
         return data;
       }
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors du chargement des questions.",
+      body["error"] ?? "Erreur lors du chargement des questions.",
     );
   }
 
@@ -619,42 +466,19 @@ class ApiService {
     required String reponseCorrecte,
     required double points,
   }) async {
-    final userId =
-        await getUserId();
-
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
-
-    if (userId == null ||
-        username == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/questions-ouvertes/creer/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/questions-ouvertes/creer/"),
+      headers: headers,
       body: jsonEncode({
-        "user_id": userId,
-        "username": username,
-        "role": role,
         "question": question,
         "reponse_correcte": reponseCorrecte,
         "points": points,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200 ||
         response.statusCode == 201) {
@@ -662,8 +486,7 @@ class ApiService {
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la création de la question.",
+      body["error"] ?? "Erreur lors de la création de la question.",
     );
   }
 
@@ -673,15 +496,11 @@ class ApiService {
 
   static Future<Map<String, dynamic>>
       supprimerQuestionOuverte(int id) async {
-    final username = await getUsername();
-    final role = await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.delete(
-      Uri.parse(
-        "$baseUrl/qcm/questions-ouvertes/$id/supprimer/"
-        "?username=${Uri.encodeComponent(username ?? "")}"
-        "&role=${Uri.encodeComponent(role ?? "")}",
-      ),
+      Uri.parse("$baseUrl/qcm/questions-ouvertes/$id/supprimer/"),
+      headers: headers,
     );
 
     final body = _decodeResponse(response);
@@ -697,61 +516,39 @@ class ApiService {
 
   // ==========================================================
   // DEVOIRS : LISTE
-  // Filtre niveau optionnel (enseignant uniquement, côté
-  // backend). Sans paramètre, tout est affiché.
   // ==========================================================
 
   static Future<List<dynamic>>
       getDevoirs({String? niveau}) async {
-    final username =
-        await getUsername();
+    final headers = await _headersAuth();
 
-    final role =
-        await getRole();
-
-    if (username == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
-
-    String uri =
-        "$baseUrl/qcm/devoirs/"
-        "?username=${Uri.encodeComponent(username)}"
-        "&role=${Uri.encodeComponent(role)}";
+    String uri = "$baseUrl/qcm/devoirs/";
 
     if (niveau != null && niveau.isNotEmpty) {
-      uri += "&niveau=${Uri.encodeComponent(niveau)}";
+      uri += "?niveau=${Uri.encodeComponent(niveau)}";
     }
 
-    final response = await http.get(Uri.parse(uri));
+    final response = await http.get(Uri.parse(uri), headers: headers);
 
     if (response.statusCode == 200) {
-      final data =
-          jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
       if (data is List) {
         return data;
       }
 
-      throw Exception(
-        "Format de réponse invalide.",
-      );
+      throw Exception("Format de réponse invalide.");
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors du chargement des devoirs.",
+      body["error"] ?? "Erreur lors du chargement des devoirs.",
     );
   }
 
   // ==========================================================
   // CREER DEVOIR PAR NIVEAU
-  // Le devoir est créé pour tous les étudiants du niveau.
   // ==========================================================
 
   static Future<Map<String, dynamic>>
@@ -761,34 +558,12 @@ class ApiService {
     required String contenu,
     required List<int> questions,
   }) async {
-    final userId =
-        await getUserId();
-
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
-
-    if (userId == null ||
-        username == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/creer/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/devoirs/creer/"),
+      headers: headers,
       body: jsonEncode({
-        "user_id": userId,
-        "username": username,
-        "role": role,
         "niveau": niveau,
         "titre": titre,
         "contenu": contenu,
@@ -796,8 +571,7 @@ class ApiService {
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200 ||
         response.statusCode == 201) {
@@ -805,8 +579,7 @@ class ApiService {
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la création du devoir.",
+      body["error"] ?? "Erreur lors de la création du devoir.",
     );
   }
 
@@ -816,15 +589,11 @@ class ApiService {
 
   static Future<Map<String, dynamic>>
       supprimerDevoir(int id) async {
-    final username = await getUsername();
-    final role = await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.delete(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/$id/supprimer/"
-        "?username=${Uri.encodeComponent(username ?? "")}"
-        "&role=${Uri.encodeComponent(role ?? "")}",
-      ),
+      Uri.parse("$baseUrl/qcm/devoirs/$id/supprimer/"),
+      headers: headers,
     );
 
     final body = _decodeResponse(response);
@@ -843,40 +612,22 @@ class ApiService {
   // ==========================================================
 
   static Future<Map<String, dynamic>>
-      getDevoir(
-    int devoirId,
-  ) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
-
-    if (username == null ||
-        role == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+      getDevoir(int devoirId) async {
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/$devoirId/"
-        "?username=${Uri.encodeComponent(username)}"
-        "&role=${Uri.encodeComponent(role)}",
-      ),
+      Uri.parse("$baseUrl/qcm/devoirs/$devoirId/"),
+      headers: headers,
     );
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "Devoir introuvable.",
+      body["error"] ?? "Devoir introuvable.",
     );
   }
 
@@ -890,37 +641,25 @@ class ApiService {
     required int questionId,
     required String reponseEtudiant,
   }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/$devoirId/repondre/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/devoirs/$devoirId/repondre/"),
+      headers: headers,
       body: jsonEncode({
-        "username": username,
-        "role": role,
         "question_id": questionId,
         "reponse_etudiant": reponseEtudiant,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de l'enregistrement.",
+      body["error"] ?? "Erreur lors de l'enregistrement.",
     );
   }
 
@@ -929,38 +668,22 @@ class ApiService {
   // ==========================================================
 
   static Future<Map<String, dynamic>>
-      terminerDevoir({
-    required int devoirId,
-  }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+      terminerDevoir({required int devoirId}) async {
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/$devoirId/terminer/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode({
-        "username": username,
-        "role": role,
-      }),
+      Uri.parse("$baseUrl/qcm/devoirs/$devoirId/terminer/"),
+      headers: headers,
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la finalisation.",
+      body["error"] ?? "Erreur lors de la finalisation.",
     );
   }
 
@@ -969,33 +692,22 @@ class ApiService {
   // ==========================================================
 
   static Future<Map<String, dynamic>>
-      getResultatDevoir({
-    required int devoirId,
-  }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+      getResultatDevoir({required int devoirId}) async {
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/$devoirId/resultat/"
-        "?username=${Uri.encodeComponent(username ?? "")}"
-        "&role=${Uri.encodeComponent(role ?? "")}",
-      ),
+      Uri.parse("$baseUrl/qcm/devoirs/$devoirId/resultat/"),
+      headers: headers,
     );
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors du chargement du résultat.",
+      body["error"] ?? "Erreur lors du chargement du résultat.",
     );
   }
 
@@ -1008,38 +720,25 @@ class ApiService {
     required int questionId,
     required String reponse,
   }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/question-ouverte/corriger/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/question-ouverte/corriger/"),
+      headers: headers,
       body: jsonEncode({
-        "user_id": await getUserId(),
-        "username": username,
-        "role": role,
         "question_id": questionId,
         "reponse_etudiant": reponse,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la correction.",
+      body["error"] ?? "Erreur lors de la correction.",
     );
   }
 
@@ -1049,36 +748,21 @@ class ApiService {
 
   static Future<Map<String, dynamic>>
       getPlagiat() async {
-    final userId =
-        await getUserId();
-
-    final role =
-        await getRole();
-
-    if (userId == null) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/qcm/plagiat/tous/"
-        "?user_id=$userId"
-        "&role=${Uri.encodeComponent(role ?? "")}",
-      ),
+      Uri.parse("$baseUrl/qcm/plagiat/tous/"),
+      headers: headers,
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors du chargement du plagiat.",
+      body["error"] ?? "Erreur lors du chargement du plagiat.",
     );
   }
 
@@ -1091,38 +775,25 @@ class ApiService {
     required String texte1,
     required String texte2,
   }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/plagiat/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/plagiat/"),
+      headers: headers,
       body: jsonEncode({
-        "user_id": await getUserId(),
-        "username": username,
-        "role": role,
         "texte1": texte1,
         "texte2": texte2,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur d'analyse du plagiat.",
+      body["error"] ?? "Erreur d'analyse du plagiat.",
     );
   }
 
@@ -1136,13 +807,11 @@ class ApiService {
     required String titre,
     required String contenu,
   }) async {
+    final headers = await _headersAuth();
+
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/devoirs/plagiat/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/devoirs/plagiat/"),
+      headers: headers,
       body: jsonEncode({
         "etudiant": etudiant,
         "titre": titre,
@@ -1150,8 +819,7 @@ class ApiService {
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200 ||
         response.statusCode == 201) {
@@ -1159,8 +827,7 @@ class ApiService {
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la soumission.",
+      body["error"] ?? "Erreur lors de la soumission.",
     );
   }
 
@@ -1175,38 +842,12 @@ class ApiService {
     required int nombreQuestions,
     required String niveau,
   }) async {
-    final utilisateur =
-        await getInformationsUtilisateur();
-
-    final username =
-        utilisateur["username"] ?? "";
-
-    final role =
-        utilisateur["role"] ?? "";
-
-    if (username.isEmpty ||
-        role.isEmpty) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
-
-    if (role != "enseignant") {
-      throw Exception(
-        "Cette fonctionnalité est réservée à l'enseignant.",
-      );
-    }
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/generer/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/generer/"),
+      headers: headers,
       body: jsonEncode({
-        "username": username,
-        "role": role,
         "titre": titre,
         "texte": texte,
         "niveau": niveau,
@@ -1214,8 +855,7 @@ class ApiService {
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 201 ||
         response.statusCode == 200) {
@@ -1239,84 +879,46 @@ class ApiService {
     required int nombreQuestions,
     required String niveau,
   }) async {
-    final utilisateur =
-        await getInformationsUtilisateur();
+    final headerAuth = await _headerAuthSeul();
 
-    final username =
-        utilisateur["username"] ?? "";
-
-    final role =
-        utilisateur["role"] ?? "";
-
-    if (username.isEmpty ||
-        role.isEmpty) {
-      throw Exception(
-        "Utilisateur non connecté.",
-      );
-    }
-
-    if (role != "enseignant") {
-      throw Exception(
-        "Cette fonctionnalité est réservée à l'enseignant.",
-      );
-    }
-
-    final resultat =
-        await FilePicker.platform.pickFiles(
+    final resultat = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ["pdf"],
       withData: true,
     );
 
     if (resultat == null) {
-      throw Exception(
-        "Aucun fichier sélectionné.",
-      );
+      throw Exception("Aucun fichier sélectionné.");
     }
 
-    final fichier =
-        resultat.files.single;
+    final fichier = resultat.files.single;
 
     if (fichier.name.isEmpty) {
-      throw Exception(
-        "Nom du fichier invalide.",
-      );
+      throw Exception("Nom du fichier invalide.");
     }
 
-    if (!fichier.name
-        .toLowerCase()
-        .endsWith(".pdf")) {
-      throw Exception(
-        "Le fichier sélectionné doit être un PDF.",
-      );
+    if (!fichier.name.toLowerCase().endsWith(".pdf")) {
+      throw Exception("Le fichier sélectionné doit être un PDF.");
     }
 
     if (fichier.bytes == null) {
-      throw Exception(
-        "Impossible de lire les données du fichier PDF.",
-      );
+      throw Exception("Impossible de lire les données du fichier PDF.");
     }
 
     if (fichier.bytes!.isEmpty) {
-      throw Exception(
-        "Le fichier PDF est vide.",
-      );
+      throw Exception("Le fichier PDF est vide.");
     }
 
-    final request =
-        http.MultipartRequest(
+    final request = http.MultipartRequest(
       "POST",
-      Uri.parse(
-        "$baseUrl/qcm/generer-pdf/",
-      ),
+      Uri.parse("$baseUrl/qcm/generer-pdf/"),
     );
 
-    request.fields["username"] = username;
-    request.fields["role"] = role;
+    request.headers.addAll(headerAuth);
+
     request.fields["titre"] = titre;
     request.fields["niveau"] = niveau;
-    request.fields["nombre_questions"] =
-        nombreQuestions.toString();
+    request.fields["nombre_questions"] = nombreQuestions.toString();
 
     request.files.add(
       http.MultipartFile.fromBytes(
@@ -1326,16 +928,10 @@ class ApiService {
       ),
     );
 
-    final streamedResponse =
-        await request.send();
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
 
-    final response =
-        await http.Response.fromStream(
-      streamedResponse,
-    );
-
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200 ||
         response.statusCode == 201) {
@@ -1351,45 +947,34 @@ class ApiService {
 
   // ==========================================================
   // LISTE QCM
-  // - Envoie toujours username+role (pour que le backend
-  //   filtre automatiquement côté étudiant).
-  // - niveau : filtre optionnel, utile côté enseignant.
   // ==========================================================
 
   static Future<List<dynamic>>
       getQCM({String? niveau}) async {
-    final username = await getUsername();
-    final role = await getRole();
+    final headers = await _headersAuth();
 
-    String uri = "$baseUrl/qcm/"
-        "?username=${Uri.encodeComponent(username ?? "")}"
-        "&role=${Uri.encodeComponent(role ?? "")}";
+    String uri = "$baseUrl/qcm/";
 
     if (niveau != null && niveau.isNotEmpty) {
-      uri += "&niveau=${Uri.encodeComponent(niveau)}";
+      uri += "?niveau=${Uri.encodeComponent(niveau)}";
     }
 
-    final response = await http.get(Uri.parse(uri));
+    final response = await http.get(Uri.parse(uri), headers: headers);
 
     if (response.statusCode == 200) {
-      final data =
-          jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
       if (data is List) {
         return data;
       }
 
-      throw Exception(
-        "Format de réponse invalide.",
-      );
+      throw Exception("Format de réponse invalide.");
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors du chargement des QCM.",
+      body["error"] ?? "Erreur lors du chargement des QCM.",
     );
   }
 
@@ -1398,25 +983,22 @@ class ApiService {
   // ==========================================================
 
   static Future<Map<String, dynamic>>
-      getQCMDetail(
-    int id,
-  ) async {
+      getQCMDetail(int id) async {
+    final headers = await _headersAuth();
+
     final response = await http.get(
-      Uri.parse(
-        "$baseUrl/qcm/$id/",
-      ),
+      Uri.parse("$baseUrl/qcm/$id/"),
+      headers: headers,
     );
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     throw Exception(
-      body["error"] ??
-          "QCM introuvable.",
+      body["error"] ?? "QCM introuvable.",
     );
   }
 
@@ -1426,15 +1008,11 @@ class ApiService {
 
   static Future<Map<String, dynamic>>
       supprimerQCM(int id) async {
-    final username = await getUsername();
-    final role = await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.delete(
-      Uri.parse(
-        "$baseUrl/qcm/$id/supprimer/"
-        "?username=${Uri.encodeComponent(username ?? "")}"
-        "&role=${Uri.encodeComponent(role ?? "")}",
-      ),
+      Uri.parse("$baseUrl/qcm/$id/supprimer/"),
+      headers: headers,
     );
 
     final body = _decodeResponse(response);
@@ -1457,38 +1035,25 @@ class ApiService {
     required int questionId,
     required String reponse,
   }) async {
-    final username =
-        await getUsername();
-
-    final role =
-        await getRole();
+    final headers = await _headersAuth();
 
     final response = await http.post(
-      Uri.parse(
-        "$baseUrl/qcm/question-qcm/corriger/",
-      ),
-      headers: {
-        "Content-Type": "application/json",
-      },
+      Uri.parse("$baseUrl/qcm/question-qcm/corriger/"),
+      headers: headers,
       body: jsonEncode({
-        "user_id": await getUserId(),
-        "username": username,
-        "role": role,
         "question_id": questionId,
         "reponse": reponse,
       }),
     );
 
-    final body =
-        _decodeResponse(response);
+    final body = _decodeResponse(response);
 
     if (response.statusCode == 200) {
       return body;
     }
 
     throw Exception(
-      body["error"] ??
-          "Erreur lors de la correction du QCM.",
+      body["error"] ?? "Erreur lors de la correction du QCM.",
     );
   }
 }

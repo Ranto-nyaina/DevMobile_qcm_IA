@@ -1,313 +1,313 @@
-import 'package:flutter/material.dart';
+  import 'package:flutter/material.dart';
 
-import '../services/api_service.dart';
+  import '../services/api_service.dart';
 
-import 'qcm_screen.dart';
-import 'generation_screen.dart';
-import 'question_ouverte_screen.dart';
-import 'creer_question_ouverte_screen.dart';
-import 'plagiat_screen.dart';
-import 'devoir_screen.dart';
-import 'liste_devoirs_screen.dart';
+  import 'qcm_screen.dart';
+  import 'generation_screen.dart';
+  import 'question_ouverte_screen.dart';
+  import 'creer_question_ouverte_screen.dart';
+  import 'plagiat_screen.dart';
+  import 'devoir_screen.dart';
+  import 'liste_devoirs_screen.dart';
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  class HomeScreen extends StatefulWidget {
+    const HomeScreen({super.key});
 
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-
-  late Future<List<dynamic>> qcms;
-
-  @override
-  void initState() {
-    super.initState();
-
-    qcms = ApiService.getQCM();
+    @override
+    State<HomeScreen> createState() => _HomeScreenState();
   }
 
-  // ============================================================
-  // ACTUALISER LA LISTE DES QCM
-  // ============================================================
+  class _HomeScreenState extends State<HomeScreen> {
 
-  void actualiserQCM() {
-    setState(() {
+    late Future<List<dynamic>> qcms;
+
+    @override
+    void initState() {
+      super.initState();
+
       qcms = ApiService.getQCM();
-    });
-  }
+    }
 
-  @override
-  Widget build(BuildContext context) {
+    // ============================================================
+    // ACTUALISER LA LISTE DES QCM
+    // ============================================================
 
-    return Scaffold(
+    void actualiserQCM() {
+      setState(() {
+        qcms = ApiService.getQCM();
+      });
+    }
 
-      // ========================================================
-      // APP BAR
-      // ========================================================
+    @override
+    Widget build(BuildContext context) {
 
-      appBar: AppBar(
-        title: const Text("QCM AI"),
-      ),
+      return Scaffold(
 
-      // ========================================================
-      // LISTE DES QCM
-      // ========================================================
+        // ========================================================
+        // APP BAR
+        // ========================================================
 
-      body: FutureBuilder<List<dynamic>>(
-        future: qcms,
+        appBar: AppBar(
+          title: const Text("QCM AI"),
+        ),
 
-        builder: (context, snapshot) {
+        // ========================================================
+        // LISTE DES QCM
+        // ========================================================
 
-          if (snapshot.connectionState ==
-              ConnectionState.waiting) {
+        body: FutureBuilder<List<dynamic>>(
+          future: qcms,
 
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+          builder: (context, snapshot) {
 
-          if (snapshot.hasError) {
+            if (snapshot.connectionState ==
+                ConnectionState.waiting) {
 
-            return Center(
-              child: Text(
-                "Erreur : ${snapshot.error}",
-                textAlign: TextAlign.center,
-              ),
-            );
-          }
+              return const Center(
+                child: CircularProgressIndicator(),
+              );
+            }
 
-          final data = snapshot.data ?? [];
+            if (snapshot.hasError) {
 
-          if (data.isEmpty) {
+              return Center(
+                child: Text(
+                  "Erreur : ${snapshot.error}",
+                  textAlign: TextAlign.center,
+                ),
+              );
+            }
 
-            return const Center(
-              child: Text(
-                "Aucun QCM disponible",
-              ),
-            );
-          }
+            final data = snapshot.data ?? [];
 
-          return ListView.builder(
+            if (data.isEmpty) {
 
-            itemCount: data.length,
+              return const Center(
+                child: Text(
+                  "Aucun QCM disponible",
+                ),
+              );
+            }
 
-            itemBuilder: (context, index) {
+            return ListView.builder(
 
-              final qcm = data[index];
+              itemCount: data.length,
 
-              final int qcmId =
-                  int.parse(qcm["id"].toString());
+              itemBuilder: (context, index) {
 
-              return Card(
+                final qcm = data[index];
 
-                margin: const EdgeInsets.all(10),
+                final int qcmId =
+                    int.parse(qcm["id"].toString());
 
-                child: ListTile(
+                return Card(
 
-                  title: Text(
-                    qcm["titre"]?.toString() ?? "",
-                  ),
+                  margin: const EdgeInsets.all(10),
 
-                  subtitle: Text(
-                    qcm["description"]?.toString() ?? "",
-                  ),
+                  child: ListTile(
 
-                  trailing: const Icon(
-                    Icons.arrow_forward,
-                  ),
+                    title: Text(
+                      qcm["titre"]?.toString() ?? "",
+                    ),
 
-                  onTap: () {
+                    subtitle: Text(
+                      qcm["description"]?.toString() ?? "",
+                    ),
 
-                    Navigator.push(
-                      context,
+                    trailing: const Icon(
+                      Icons.arrow_forward,
+                    ),
 
-                      MaterialPageRoute(
-                        builder: (_) => QCMScreen(
-                          qcmId: qcmId,
+                    onTap: () {
+
+                      Navigator.push(
+                        context,
+
+                        MaterialPageRoute(
+                          builder: (_) => QCMScreen(
+                            qcmId: qcmId,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
-          );
-        },
-      ),
+                      );
+                    },
+                  ),
+                );
+              },
+            );
+          },
+        ),
 
-      // ========================================================
-      // BOUTONS FLOTTANTS
-      // ========================================================
+        // ========================================================
+        // BOUTONS FLOTTANTS
+        // ========================================================
 
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
+        floatingActionButton: Column(
+          mainAxisSize: MainAxisSize.min,
 
-        children: [
+          children: [
 
-          // ======================================================
-          // PLAGIAT
-          // ======================================================
+            // ======================================================
+            // PLAGIAT
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "plagiat",
+            FloatingActionButton(
+              heroTag: "plagiat",
 
-            onPressed: () {
+              onPressed: () {
 
-              Navigator.push(
-                context,
+                Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const PlagiatScreen(),
-                ),
-              );
-            },
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const PlagiatScreen(),
+                  ),
+                );
+              },
 
-            child: const Icon(
-              Icons.find_in_page,
+              child: const Icon(
+                Icons.find_in_page,
+              ),
             ),
-          ),
 
-          const SizedBox(height: 15),
+            const SizedBox(height: 15),
 
-          // ======================================================
-          // QUESTIONS OUVERTES
-          // ======================================================
+            // ======================================================
+            // QUESTIONS OUVERTES
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "question_ouverte",
+            FloatingActionButton(
+              heroTag: "question_ouverte",
 
-            onPressed: () {
+              onPressed: () {
 
-              Navigator.push(
-                context,
+                Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const QuestionOuverteScreen(),
-                ),
-              );
-            },
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const QuestionOuverteScreen(),
+                  ),
+                );
+              },
 
-            child: const Icon(
-              Icons.edit_note,
+              child: const Icon(
+                Icons.edit_note,
+              ),
             ),
-          ),
 
-          const SizedBox(height: 15),
+            const SizedBox(height: 15),
 
-          // ======================================================
-          // DEVOIR
-          // ======================================================
+            // ======================================================
+            // DEVOIR
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "devoir",
+            FloatingActionButton(
+              heroTag: "devoir",
 
-            onPressed: () {
+              onPressed: () {
 
-              Navigator.push(
-                context,
+                Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const DevoirScreen(),
-                ),
-              );
-            },
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const DevoirScreen(),
+                  ),
+                );
+              },
 
-            child: const Icon(
-              Icons.assignment,
+              child: const Icon(
+                Icons.assignment,
+              ),
             ),
-          ),
 
-          const SizedBox(height: 15),
+            const SizedBox(height: 15),
 
-          // ======================================================
-          // PASSER UN DEVOIR
-          // ======================================================
+            // ======================================================
+            // PASSER UN DEVOIR
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "liste_devoirs",
+            FloatingActionButton(
+              heroTag: "liste_devoirs",
 
-            onPressed: () {
+              onPressed: () {
 
-              Navigator.push(
-                context,
+                Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const ListeDevoirsScreen(),
-                ),
-              );
-            },
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const ListeDevoirsScreen(),
+                  ),
+                );
+              },
 
-            child: const Icon(
-              Icons.play_arrow,
+              child: const Icon(
+                Icons.play_arrow,
+              ),
             ),
-          ),
 
-          const SizedBox(height: 15),
+            const SizedBox(height: 15),
 
 
-          // ======================================================
-          // CRÉER QUESTION OUVERTE
-          // ======================================================
+            // ======================================================
+            // CRÉER QUESTION OUVERTE
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "creer_question_ouverte",
+            FloatingActionButton(
+              heroTag: "creer_question_ouverte",
 
-            onPressed: () async {
+              onPressed: () async {
 
-              await Navigator.push(
-                context,
+                await Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const CreerQuestionOuverteScreen(),
-                ),
-              );
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const CreerQuestionOuverteScreen(),
+                  ),
+                );
 
-              // On recharge les données lorsque
-              // l'utilisateur revient sur HomeScreen.
-              setState(() {});
-            },
+                // On recharge les données lorsque
+                // l'utilisateur revient sur HomeScreen.
+                setState(() {});
+              },
 
-            child: const Icon(
-              Icons.add_comment,
+              child: const Icon(
+                Icons.add_comment,
+              ),
             ),
-          ),
 
-          const SizedBox(height: 15),
+            const SizedBox(height: 15),
 
-          // ======================================================
-          // GÉNÉRER UN QCM
-          // ======================================================
+            // ======================================================
+            // GÉNÉRER UN QCM
+            // ======================================================
 
-          FloatingActionButton(
-            heroTag: "generer_qcm",
+            FloatingActionButton(
+              heroTag: "generer_qcm",
 
-            onPressed: () async {
+              onPressed: () async {
 
-              await Navigator.push(
-                context,
+                await Navigator.push(
+                  context,
 
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const GenerationScreen(),
-                ),
-              );
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const GenerationScreen(),
+                  ),
+                );
 
-              actualiserQCM();
-            },
+                actualiserQCM();
+              },
 
-            child: const Icon(
-              Icons.add,
+              child: const Icon(
+                Icons.add,
+              ),
             ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    }
   }
-}
