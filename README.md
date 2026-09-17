@@ -355,5 +355,5 @@ Par défaut, `lib/services/api_service.dart` pointe vers `http://127.0.0.1:8000/
 
 ## Auteur
 
-[Ton nom]
-Projet réalisé dans le cadre de [contexte — ENI, Dev mobile M1, etc.]
+FANOMEZANTSOA Rantoniaina Harlivah 
+Projet réalisé dans le cadre de ENI, Dev mobile Flutter M1
