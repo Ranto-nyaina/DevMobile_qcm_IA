@@ -271,8 +271,8 @@ Git / GitHub
 👨‍🎓 Contexte académique
 
 Projet : QCM AI — génération et correction de QCM assistées par IA
-Auteur : [Ton nom]
-Cadre : [contexte — ENI, Dev mobile M1, etc.]
+Auteur : FANOMEZANTSOA Rantoniaina Harlivah 
+Cadre :  ENI, Dev mobile Flutter M1
 
 
 ---
