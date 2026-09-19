@@ -100,11 +100,10 @@ qcm-ai/
 │   ├── manage.py
 │   └── requirements.txt
 │
-└── mobile/
-    └── qcm_app/       # application Flutter, un écran par fonctionnalité
-        └── lib/
-            └── services/
-                └── api_service.dart
+└── frontend/       # application Flutter, un écran par fonctionnalité
+    └── lib/
+        └── services/
+            └── api_service.dart
 ```
 
 ---
@@ -176,7 +175,7 @@ http://127.0.0.1:8000/api/
 ### Frontend
 
 ```bash
-cd mobile/qcm_app
+cd frontend
 flutter pub get
 flutter run -d chrome
 ```
